@@ -37,7 +37,6 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.media3.common.util.Util
 import androidx.media3.ui.PlayerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -192,10 +191,14 @@ class PlayerActivity : AppCompatActivity() {
     private fun initializePlayer() {
         // Check if we have videos to play
         if (playlist.isEmpty()) {
+            android.util.Log.e("PlayerActivity", "No videos in playlist!")
             Toast.makeText(this, "No video to play", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
+        
+        android.util.Log.d("PlayerActivity", "Initializing player with ${playlist.size} videos")
+        android.util.Log.d("PlayerActivity", "Current video URI: ${playlist.getOrNull(currentIndex)}")
         
         // Track selector - NO quality restrictions
         trackSelector = DefaultTrackSelector(this).apply {
@@ -217,6 +220,8 @@ class PlayerActivity : AppCompatActivity() {
             .setHandleAudioBecomingNoisy(true)
             .build()
             .also { exoPlayer ->
+                android.util.Log.d("PlayerActivity", "ExoPlayer created successfully")
+                
                 binding.playerView.player = exoPlayer
                 binding.playerView.useController = false // Use custom controls
                 
@@ -227,56 +232,63 @@ class PlayerActivity : AppCompatActivity() {
                 loadPlaylist()
                 
                 // Start playback
+                android.util.Log.d("PlayerActivity", "Calling prepare() on player")
                 exoPlayer.prepare()
+                
+                android.util.Log.d("PlayerActivity", "Setting playWhenReady = true")
                 exoPlayer.playWhenReady = true
+                
+                // Show loading indicator
+                binding.progressBar.visibility = View.VISIBLE
+                
+                // Log current state
+                android.util.Log.d("PlayerActivity", "Player state after init: ${exoPlayer.playbackState}")
+                android.util.Log.d("PlayerActivity", "PlayWhenReady: ${exoPlayer.playWhenReady}")
+                android.util.Log.d("PlayerActivity", "IsPlaying: ${exoPlayer.isPlaying}")
             }
     }
 
     private fun loadPlaylist() {
         player?.let { exoPlayer ->
             if (playlist.isEmpty()) {
+                android.util.Log.e("PlayerActivity", "loadPlaylist: Playlist is empty!")
                 Toast.makeText(this, "No video to play", Toast.LENGTH_SHORT).show()
                 return@let
             }
             
-            val mediaItems = playlist.mapNotNull { uriString ->
+            android.util.Log.d("PlayerActivity", "loadPlaylist: Creating media items for ${playlist.size} videos")
+            
+            val mediaItems = playlist.mapIndexedNotNull { index, uriString ->
                 try {
+                    android.util.Log.d("PlayerActivity", "loadPlaylist: Parsing URI $index: $uriString")
                     val uri = Uri.parse(uriString)
-                    val mimeType = if (isNetworkStream) {
-                        // For network streams, try to infer content type
-                        val contentType = Util.inferContentType(uri)
-                        when (contentType) {
-                            C.CONTENT_TYPE_HLS -> MimeTypes.APPLICATION_M3U8
-                            C.CONTENT_TYPE_DASH -> MimeTypes.APPLICATION_MPD
-                            C.CONTENT_TYPE_SS -> MimeTypes.APPLICATION_SS
-                            C.CONTENT_TYPE_RTSP -> MimeTypes.APPLICATION_RTSP
-                            else -> null // Let ExoPlayer guess or use progressive
-                        }
-                    } else {
-                        null
-                    }
-                    
-                    MediaItem.Builder()
+                    val mediaItem = MediaItem.Builder()
                         .setUri(uri)
-                        .apply {
-                            if (mimeType != null) {
-                                setMimeType(mimeType)
-                            }
-                        }
                         .build()
+                    android.util.Log.d("PlayerActivity", "loadPlaylist: Successfully created MediaItem $index")
+                    mediaItem
                 } catch (e: Exception) {
+                    android.util.Log.e("PlayerActivity", "loadPlaylist: Failed to create MediaItem $index", e)
+                    Toast.makeText(this, "Failed to load video: ${e.message}", Toast.LENGTH_SHORT).show()
                     null
                 }
             }
             
             if (mediaItems.isEmpty()) {
+                android.util.Log.e("PlayerActivity", "loadPlaylist: No valid media items created!")
                 Toast.makeText(this, "Failed to load video", Toast.LENGTH_SHORT).show()
                 return@let
             }
             
+            android.util.Log.d("PlayerActivity", "loadPlaylist: Created ${mediaItems.size} valid media items")
+            
             // Ensure currentIndex is valid
             val validIndex = currentIndex.coerceIn(0, mediaItems.size - 1)
+            android.util.Log.d("PlayerActivity", "loadPlaylist: Setting media items, starting at index $validIndex")
+            android.util.Log.d("PlayerActivity", "loadPlaylist: First media URI: ${mediaItems[validIndex].localConfiguration?.uri}")
+            
             exoPlayer.setMediaItems(mediaItems, validIndex, 0)
+            android.util.Log.d("PlayerActivity", "loadPlaylist: Media items set successfully")
         }
     }
 
@@ -294,11 +306,20 @@ class PlayerActivity : AppCompatActivity() {
             when (state) {
                 Player.STATE_BUFFERING -> {
                     binding.progressBar.visibility = View.VISIBLE
+                    android.util.Log.d("PlayerActivity", "Buffering...")
                 }
                 Player.STATE_READY -> {
                     binding.progressBar.visibility = View.GONE
                     updateDuration()
                     android.util.Log.d("PlayerActivity", "Video ready - Duration: ${player?.duration}")
+                    
+                    // Ensure playback starts when ready
+                    player?.let { p ->
+                        if (p.playWhenReady && !p.isPlaying) {
+                            android.util.Log.d("PlayerActivity", "Player is READY but not playing. Calling play()")
+                            p.play()
+                        }
+                    }
                 }
                 Player.STATE_ENDED -> {
                     if (currentIndex < playlist.size - 1) {
@@ -309,6 +330,11 @@ class PlayerActivity : AppCompatActivity() {
                     // Check if there's an error
                     player?.playerError?.let { error ->
                         android.util.Log.e("PlayerActivity", "Player error in IDLE: ${error.message}", error)
+                        Toast.makeText(
+                            this@PlayerActivity,
+                            "Error: ${error.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
@@ -328,9 +354,10 @@ class PlayerActivity : AppCompatActivity() {
         
         override fun onPlayerError(error: PlaybackException) {
             android.util.Log.e("PlayerActivity", "Player error: ${error.errorCodeName} - ${error.message}", error)
+            android.util.Log.e("PlayerActivity", "Error code: ${error.errorCode}")
             Toast.makeText(
                 this@PlayerActivity,
-                "Playback error: ${error.errorCodeName} - ${error.message}",
+                "Playback error: ${error.message}",
                 Toast.LENGTH_LONG
             ).show()
             binding.progressBar.visibility = View.GONE
