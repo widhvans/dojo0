@@ -37,6 +37,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.common.util.Util
 import androidx.media3.ui.PlayerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -241,8 +242,27 @@ class PlayerActivity : AppCompatActivity() {
             val mediaItems = playlist.mapNotNull { uriString ->
                 try {
                     val uri = Uri.parse(uriString)
+                    val mimeType = if (isNetworkStream) {
+                        // For network streams, try to infer content type
+                        val contentType = Util.inferContentType(uri)
+                        when (contentType) {
+                            C.CONTENT_TYPE_HLS -> MimeTypes.APPLICATION_M3U8
+                            C.CONTENT_TYPE_DASH -> MimeTypes.APPLICATION_MPD
+                            C.CONTENT_TYPE_SS -> MimeTypes.APPLICATION_SS
+                            C.CONTENT_TYPE_RTSP -> MimeTypes.APPLICATION_RTSP
+                            else -> null // Let ExoPlayer guess or use progressive
+                        }
+                    } else {
+                        null
+                    }
+                    
                     MediaItem.Builder()
                         .setUri(uri)
+                        .apply {
+                            if (mimeType != null) {
+                                setMimeType(mimeType)
+                            }
+                        }
                         .build()
                 } catch (e: Exception) {
                     null
@@ -310,7 +330,7 @@ class PlayerActivity : AppCompatActivity() {
             android.util.Log.e("PlayerActivity", "Player error: ${error.errorCodeName} - ${error.message}", error)
             Toast.makeText(
                 this@PlayerActivity,
-                "Playback error: ${error.message}",
+                "Playback error: ${error.errorCodeName} - ${error.message}",
                 Toast.LENGTH_LONG
             ).show()
             binding.progressBar.visibility = View.GONE
