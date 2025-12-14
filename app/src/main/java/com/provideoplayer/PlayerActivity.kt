@@ -1,4 +1,4 @@
-package com.provideoplayer
+package com.provideoplayer 
 
 import android.app.PictureInPictureParams
 import android.content.Context
