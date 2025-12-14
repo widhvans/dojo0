@@ -92,6 +92,10 @@ class PlayerActivity : AppCompatActivity() {
     
     // PiP
     private var isPipMode = false
+    
+    // Buffering timeout
+    private var bufferingStartTime = 0L
+    private val BUFFERING_TIMEOUT = 10000L // 10 seconds
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -307,9 +311,20 @@ class PlayerActivity : AppCompatActivity() {
                 Player.STATE_BUFFERING -> {
                     binding.progressBar.visibility = View.VISIBLE
                     android.util.Log.d("PlayerActivity", "Buffering...")
+                    
+                    // Track buffering start time
+                    if (bufferingStartTime == 0L) {
+                        bufferingStartTime = System.currentTimeMillis()
+                        
+                        // Schedule timeout check
+                        hideHandler.postDelayed({
+                            checkBufferingTimeout()
+                        }, BUFFERING_TIMEOUT)
+                    }
                 }
                 Player.STATE_READY -> {
                     binding.progressBar.visibility = View.GONE
+                    bufferingStartTime = 0L // Reset buffering timer
                     updateDuration()
                     android.util.Log.d("PlayerActivity", "Video ready - Duration: ${player?.duration}")
                     
@@ -990,6 +1005,62 @@ class PlayerActivity : AppCompatActivity() {
             String.format("%02d:%02d:%02d", hours, minutes, seconds)
         } else {
             String.format("%02d:%02d", minutes, seconds)
+        }
+    }
+    
+    private fun checkBufferingTimeout() {
+        // Check if still buffering after timeout
+        if (player?.playbackState == Player.STATE_BUFFERING && bufferingStartTime > 0) {
+            val bufferingDuration = System.currentTimeMillis() - bufferingStartTime
+            
+            if (bufferingDuration >= BUFFERING_TIMEOUT) {
+                android.util.Log.e("PlayerActivity", "Buffering timeout! Duration: ${bufferingDuration}ms")
+                
+                // Get current media URI for debugging
+                val currentUri = playlist.getOrNull(currentIndex)
+                android.util.Log.e("PlayerActivity", "Stuck on URI: $currentUri")
+                
+                // Check if file exists (for local files)
+                val uri = Uri.parse(currentUri)
+                val fileExists = try {
+                    if (uri.scheme == "content" || uri.scheme == "file") {
+                        contentResolver.openInputStream(uri)?.use { true } ?: false
+                    } else {
+                        true // Network stream, can't check
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PlayerActivity", "File access error", e)
+                    false
+                }
+                
+                // Reset buffering timer
+                bufferingStartTime = 0L
+                binding.progressBar.visibility = View.GONE
+                
+                // Show detailed error message
+                val errorMessage = when {
+                    !fileExists -> "Video file not found or inaccessible.\n\nPath: ${uri.path}"
+                    player?.playerError != null -> "Playback error: ${player?.playerError?.message}"
+                    else -> "Video is taking too long to load.\n\nThis might be due to:\n• Unsupported video format\n• Corrupted file\n• Permission issues\n\nURI: $currentUri"
+                }
+                
+                MaterialAlertDialogBuilder(this)
+                    .setTitle("Playback Error")
+                    .setMessage(errorMessage)
+                    .setPositiveButton("Retry") { _, _ ->
+                        // Retry playback
+                        player?.let {
+                            it.seekTo(0)
+                            it.prepare()
+                            bufferingStartTime = System.currentTimeMillis()
+                        }
+                    }
+                    .setNegativeButton("Close") { _, _ ->
+                        finish()
+                    }
+                    .setCancelable(false)
+                    .show()
+            }
         }
     }
 
